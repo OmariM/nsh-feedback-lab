@@ -1,3 +1,179 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { v4 as uuidv4 } from 'uuid'
+import { useLocalStorage } from '../hooks/useLocalStorage'
+import type { Participant, Role } from '../types'
+
 export default function RosterPage() {
-  return <div>Roster</div>
+  const navigate = useNavigate()
+  const [participants, setParticipants] = useLocalStorage<Participant[]>('nsh-participants', [])
+  const [newName, setNewName] = useState('')
+  const [newRole, setNewRole] = useState<Role>('lead')
+
+  const addParticipant = () => {
+    const name = newName.trim()
+    if (!name) return
+    const p: Participant = {
+      id: uuidv4(),
+      name,
+      role: newRole,
+      handicap: 1,
+      roundsPlayed: 0,
+    }
+    setParticipants((prev) => [...prev, p])
+    setNewName('')
+  }
+
+  const updateHandicap = (id: string, handicap: number) => {
+    setParticipants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, handicap } : p))
+    )
+  }
+
+  const updateRole = (id: string, role: Role) => {
+    setParticipants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, role } : p))
+    )
+  }
+
+  const deleteParticipant = (id: string) => {
+    setParticipants((prev) => prev.filter((p) => p.id !== id))
+  }
+
+  const leads = participants.filter((p) => p.role === 'lead')
+  const follows = participants.filter((p) => p.role === 'follow')
+  const canStart = leads.length >= 1 && follows.length >= 1
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white p-6">
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">NSH Feedback Lab</h1>
+            <p className="text-gray-400 mt-1">Manage your participant roster</p>
+          </div>
+          <button
+            onClick={() => navigate('/session')}
+            disabled={!canStart}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
+          >
+            Start Session →
+          </button>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-4 mb-8">
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-blue-400">{participants.length}</div>
+            <div className="text-gray-400 text-sm">Total</div>
+          </div>
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-purple-400">{leads.length}</div>
+            <div className="text-gray-400 text-sm">Leads</div>
+          </div>
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-pink-400">{follows.length}</div>
+            <div className="text-gray-400 text-sm">Follows</div>
+          </div>
+        </div>
+
+        {/* Add participant form */}
+        <div className="bg-gray-900 rounded-xl p-5 mb-6">
+          <h2 className="text-lg font-semibold mb-4">Add Participant</h2>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              placeholder="Name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addParticipant()}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
+            />
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value as Role)}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500"
+            >
+              <option value="lead">Lead</option>
+              <option value="follow">Follow</option>
+            </select>
+            <button
+              onClick={addParticipant}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold transition-colors"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        {/* Participant list */}
+        {participants.length === 0 ? (
+          <div className="text-center text-gray-500 py-16">
+            No participants yet. Add some above to get started.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {participants.map((p) => (
+              <div
+                key={p.id}
+                className="bg-gray-900 rounded-xl p-4 flex items-center gap-4"
+              >
+                {/* Name */}
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold truncate">{p.name}</div>
+                  <div className="text-gray-400 text-sm">{p.roundsPlayed} rounds played</div>
+                </div>
+
+                {/* Role toggle */}
+                <select
+                  value={p.role}
+                  onChange={(e) => updateRole(p.id, e.target.value as Role)}
+                  className={`text-sm font-semibold px-3 py-1.5 rounded-full border-0 focus:outline-none cursor-pointer ${
+                    p.role === 'lead'
+                      ? 'bg-purple-900 text-purple-300'
+                      : 'bg-pink-900 text-pink-300'
+                  }`}
+                >
+                  <option value="lead">Lead</option>
+                  <option value="follow">Follow</option>
+                </select>
+
+                {/* Handicap slider */}
+                <div className="flex items-center gap-2 w-40">
+                  <span className="text-gray-400 text-xs w-16">
+                    Weight: {p.handicap}
+                  </span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={5}
+                    step={0.5}
+                    value={p.handicap}
+                    onChange={(e) => updateHandicap(p.id, parseFloat(e.target.value))}
+                    className="flex-1 accent-emerald-500"
+                  />
+                </div>
+
+                {/* Delete */}
+                <button
+                  onClick={() => deleteParticipant(p.id)}
+                  className="text-gray-600 hover:text-red-400 transition-colors text-lg leading-none"
+                  aria-label="Remove participant"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!canStart && participants.length > 0 && (
+          <p className="text-center text-amber-500 text-sm mt-6">
+            Need at least 1 lead and 1 follow to start a session.
+          </p>
+        )}
+      </div>
+    </div>
+  )
 }
