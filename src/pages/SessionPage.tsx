@@ -8,7 +8,7 @@ import { pickPair } from '../lib/pairing'
 import { initiateSpotifyLogin } from '../lib/spotify'
 import type { Participant, Round, SessionPhase } from '../types'
 
-const DANCE_SECONDS = 60
+const DANCE_SECONDS = 120
 const FEEDBACK_SECONDS = 180
 
 function beep(frequency = 880, duration = 0.2) {
@@ -280,36 +280,40 @@ export default function SessionPage() {
               )}
 
               {/* Current track */}
-              {spotify.currentTrack ? (
-                <div className="flex items-center gap-4 mb-4">
-                  {spotify.currentTrack.albumArt && (
-                    <img
-                      src={spotify.currentTrack.albumArt}
-                      alt="Album art"
-                      className="w-12 h-12 rounded-lg object-cover"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold truncate">{spotify.currentTrack.name}</div>
-                    <div className="text-gray-400 text-sm truncate">{spotify.currentTrack.artist}</div>
-                  </div>
-                  <button
-                    onClick={spotify.togglePlay}
-                    className="w-10 h-10 rounded-full bg-emerald-600 hover:bg-emerald-500 flex items-center justify-center transition-colors"
-                  >
-                    {spotify.isPlaying ? '⏸' : '▶'}
-                  </button>
+              <div className="flex items-center gap-4 mb-4">
+                {spotify.currentTrack ? (
+                  <>
+                    {spotify.currentTrack.albumArt && (
+                      <img
+                        src={spotify.currentTrack.albumArt}
+                        alt="Album art"
+                        className="w-12 h-12 rounded-lg object-cover"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{spotify.currentTrack.name}</div>
+                      <div className="text-gray-400 text-sm truncate">{spotify.currentTrack.artist}</div>
+                    </div>
+                    <button
+                      onClick={spotify.togglePlay}
+                      className="w-10 h-10 rounded-full bg-emerald-600 hover:bg-emerald-500 flex items-center justify-center transition-colors"
+                    >
+                      {spotify.isPlaying ? '⏸' : '▶'}
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex-1 text-gray-500 text-sm">No track playing</div>
+                )}
+                {spotify.tracks.length > 0 && (
                   <button
                     onClick={spotify.playRandom}
                     disabled={!spotify.deviceId}
-                    className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg text-sm transition-colors"
+                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-colors"
                   >
-                    Random
+                    🎲 Random Song
                   </button>
-                </div>
-              ) : (
-                <div className="text-gray-500 text-sm mb-4">No track playing</div>
-              )}
+                )}
+              </div>
 
               {/* Track list toggle */}
               {spotify.tracks.length > 0 && (
