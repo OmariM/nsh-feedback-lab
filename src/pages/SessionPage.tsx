@@ -8,6 +8,26 @@ import { buildSessionQueue } from '../lib/pairing'
 import { initiateSpotifyLogin, fetchPlaylistTracks, getValidToken } from '../lib/spotify'
 import type { Participant, Round, SessionPhase, SpotifyTrack } from '../types'
 
+interface SpotifyIFrameAPI {
+  createController(
+    el: HTMLElement,
+    options: { uri: string; height?: number },
+    cb: (controller: SpotifyEmbedController) => void
+  ): void
+}
+interface SpotifyEmbedController {
+  play(): void
+  pause(): void
+  loadUri(uri: string): void
+  destroy(): void
+}
+declare global {
+  interface Window {
+    onSpotifyIframeApiReady: (api: SpotifyIFrameAPI) => void
+    SpotifyIframeApi?: SpotifyIFrameAPI
+  }
+}
+
 const DEFAULT_DANCE_SECONDS = 120
 const DEFAULT_FEEDBACK_SECONDS = 180
 
@@ -61,6 +81,9 @@ export default function SessionPage() {
   const [embedTracksError, setEmbedTracksError] = useState<string | null>(null)
   const [embedCurrentTrack, setEmbedCurrentTrack] = useState<SpotifyTrack | null>(null)
   const embedPlayedUrisRef = useRef<Set<string>>(new Set())
+  const embedContainerRef = useRef<HTMLDivElement | null>(null)
+  const embedControllerRef = useRef<SpotifyEmbedController | null>(null)
+  const embedAutoPlayRef = useRef(false)
 
   // Timer durations (adjustable before round starts)
   const [danceDuration, setDanceDuration] = useState(DEFAULT_DANCE_SECONDS)
@@ -108,6 +131,69 @@ export default function SessionPage() {
     run()
   }, [embedPlaylistId, spotify.isAuthenticated])
 
+  // Load Spotify IFrame API script once when embed is activated
+  useEffect(() => {
+    if (!embedPlaylistId || !spotify.isAuthenticated) return
+    if (window.SpotifyIframeApi || document.getElementById('spotify-iframe-api')) return
+    const script = document.createElement('script')
+    script.id = 'spotify-iframe-api'
+    script.src = 'https://open.spotify.com/embed/iframe-api/v1'
+    script.async = true
+    document.body.appendChild(script)
+    window.onSpotifyIframeApiReady = (IFrameAPI) => {
+      window.SpotifyIframeApi = IFrameAPI
+    }
+  }, [embedPlaylistId, spotify.isAuthenticated])
+
+  // Create or update embed controller whenever the current track changes
+  useEffect(() => {
+    if (!embedCurrentTrack || !embedContainerRef.current) return
+    const uri = embedCurrentTrack.uri
+    const autoPlay = embedAutoPlayRef.current
+
+    const setup = (api: SpotifyIFrameAPI) => {
+      if (embedControllerRef.current) {
+        embedControllerRef.current.loadUri(uri)
+        if (autoPlay) {
+          setTimeout(() => {
+            embedControllerRef.current?.play()
+            embedAutoPlayRef.current = false
+          }, 500)
+        }
+      } else if (embedContainerRef.current) {
+        api.createController(embedContainerRef.current, { uri, height: 152 }, (controller) => {
+          embedControllerRef.current = controller
+          if (autoPlay) {
+            setTimeout(() => {
+              controller.play()
+              embedAutoPlayRef.current = false
+            }, 500)
+          }
+        })
+      }
+    }
+
+    if (window.SpotifyIframeApi) {
+      setup(window.SpotifyIframeApi)
+    } else {
+      const interval = setInterval(() => {
+        if (window.SpotifyIframeApi) {
+          clearInterval(interval)
+          setup(window.SpotifyIframeApi)
+        }
+      }, 100)
+      return () => clearInterval(interval)
+    }
+  }, [embedCurrentTrack])
+
+  // Destroy controller when embed is cleared
+  useEffect(() => {
+    if (!embedPlaylistId) {
+      embedControllerRef.current?.destroy()
+      embedControllerRef.current = null
+    }
+  }, [embedPlaylistId])
+
   const pickEmbedTrack = useCallback(() => {
     if (embedTracks.length === 0) return
     const unplayed = embedTracks.filter((t) => !embedPlayedUrisRef.current.has(t.uri))
@@ -118,16 +204,12 @@ export default function SessionPage() {
     setEmbedCurrentTrack(track)
   }, [embedTracks])
 
-  function trackIdFromUri(uri: string): string {
-    // spotify:track:TRACK_ID → TRACK_ID
-    return uri.split(':').pop() ?? uri
-  }
-
   // ── Phase transitions ───────────────────────────────────────────────────────
 
   const onDanceEnd = useCallback(() => {
     beep(660, 0.4)
     spotify.fadeOut()
+    embedControllerRef.current?.pause()
     danceActualRef.current = danceStartRef.current > 0
       ? (Date.now() - danceStartRef.current) / 1000
       : feedbackDurationRef.current
@@ -230,6 +312,7 @@ export default function SessionPage() {
     setPhase('dancing')
     danceTimer.start(danceDuration)
     if (embedTracks.length > 0) {
+      embedAutoPlayRef.current = true
       pickEmbedTrack()
     } else {
       spotify.playRandom()
@@ -797,18 +880,9 @@ export default function SessionPage() {
                     {embedTracksError && (
                       <p className="text-red-400 text-xs mb-2">{embedTracksError}</p>
                     )}
-                    {embedCurrentTrack ? (
-                      <iframe
-                        key={embedCurrentTrack.uri}
-                        src={`https://open.spotify.com/embed/track/${trackIdFromUri(embedCurrentTrack.uri)}?utm_source=generator&theme=0`}
-                        width="100%"
-                        height="152"
-                        frameBorder="0"
-                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                        loading="lazy"
-                        className="rounded-xl"
-                      />
-                    ) : embedTracks.length > 0 ? (
+                    {/* IFrame API mounts the player into this div */}
+                    <div ref={embedContainerRef} className="rounded-xl overflow-hidden" />
+                    {!embedCurrentTrack && embedTracks.length > 0 ? (
                       <p className="text-gray-500 text-xs text-center py-4">
                         Start a round to auto-pick a song, or click "Next song" above.
                       </p>
