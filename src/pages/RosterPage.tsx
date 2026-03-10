@@ -4,11 +4,38 @@ import { v4 as uuidv4 } from 'uuid'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import type { Participant, Role } from '../types'
 
+const STEPS = [
+  {
+    label: 'Add participants',
+    detail: 'Add everyone who will dance. Set each person as Lead or Follow, and drag the Weight slider higher for newer dancers — they\'ll be picked more often.',
+  },
+  {
+    label: 'Start the session',
+    detail: 'Click Start → to go to the Session page. Click Generate Schedule to pre-plan every lead×follow pairing, or just use Pick Pair for a random selection.',
+  },
+  {
+    label: 'Run a round',
+    detail: 'Pick a pair, then press Start Round (or Space). The 2-minute dance timer counts down. Music plays automatically if Spotify is connected.',
+  },
+  {
+    label: 'Give feedback',
+    detail: 'When dancing ends, a 3-minute feedback timer starts. Music fades out. Click Save & Next Pair when feedback is done — the round is logged and the next pair is selected.',
+  },
+]
+
 export default function RosterPage() {
   const navigate = useNavigate()
   const [participants, setParticipants] = useLocalStorage<Participant[]>('nsh-participants', [])
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState<Role>('lead')
+  const [tutorialOpen, setTutorialOpen] = useState(() => {
+    try {
+      return !localStorage.getItem('nsh-participants') ||
+        JSON.parse(localStorage.getItem('nsh-participants')!).length === 0
+    } catch {
+      return true
+    }
+  })
 
   const addParticipant = () => {
     const name = newName.trim()
@@ -76,6 +103,32 @@ export default function RosterPage() {
             <div className="text-xl sm:text-2xl font-bold text-pink-400">{follows.length}</div>
             <div className="text-gray-400 text-xs sm:text-sm">Follows</div>
           </div>
+        </div>
+
+        {/* Tutorial */}
+        <div className="bg-gray-900 rounded-xl overflow-hidden mb-5 sm:mb-6">
+          <button
+            onClick={() => setTutorialOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-800 transition-colors"
+          >
+            <span className="font-semibold text-sm sm:text-base">How it works</span>
+            <span className="text-gray-400 text-sm">{tutorialOpen ? '▲' : '▼'}</span>
+          </button>
+          {tutorialOpen && (
+            <div className="px-4 sm:px-5 pb-4 sm:pb-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {STEPS.map((step, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="shrink-0 w-6 h-6 rounded-full bg-emerald-700 text-white text-xs font-bold flex items-center justify-center mt-0.5">
+                    {i + 1}
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm text-white">{step.label}</div>
+                    <div className="text-gray-400 text-xs mt-0.5 leading-relaxed">{step.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Add participant form */}
