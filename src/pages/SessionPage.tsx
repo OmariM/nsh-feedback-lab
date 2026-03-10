@@ -58,6 +58,12 @@ export default function SessionPage() {
   // Track used lead×follow combos to enforce all-pairs-before-repeat
   const usedPairsRef = useRef<Set<string>>(new Set())
 
+  // Actual round durations for predicting future start times
+  const [completedSlots, setCompletedSlots] = useState<{ dance: number; feedback: number }[]>([])
+  const danceStartRef = useRef(0)
+  const feedbackStartRef = useRef(0)
+  const danceActualRef = useRef(0) // actual dance seconds, set when dance ends
+
   const spotify = useSpotify()
 
   // ── Phase transitions ───────────────────────────────────────────────────────
@@ -65,6 +71,10 @@ export default function SessionPage() {
   const onDanceEnd = useCallback(() => {
     beep(660, 0.4)
     spotify.fadeOut()
+    danceActualRef.current = danceStartRef.current > 0
+      ? (Date.now() - danceStartRef.current) / 1000
+      : feedbackDurationRef.current
+    feedbackStartRef.current = Date.now()
     setPhase('feedback')
     feedbackTimer.start(feedbackDurationRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -73,6 +83,15 @@ export default function SessionPage() {
   const onFeedbackEnd = useCallback(() => {
     beep(880, 0.2)
     setTimeout(() => beep(880, 0.2), 300)
+    if (danceActualRef.current > 0 && feedbackStartRef.current > 0) {
+      const feedbackActual = (Date.now() - feedbackStartRef.current) / 1000
+      setCompletedSlots((prev) => [
+        ...prev,
+        { dance: danceActualRef.current, feedback: feedbackActual },
+      ])
+      danceActualRef.current = 0
+      feedbackStartRef.current = 0
+    }
     setPhase('idle')
   }, [])
 
@@ -150,6 +169,7 @@ export default function SessionPage() {
 
   const startRound = useCallback(() => {
     if (!currentPair) return
+    danceStartRef.current = Date.now()
     setPhase('dancing')
     danceTimer.start(danceDuration)
     spotify.playRandom()
@@ -190,6 +210,16 @@ export default function SessionPage() {
     if (!currentPair) return
     const savedPair = currentPair
     saveRound(currentPair)
+    // Record actual slot durations before stopping
+    if (danceActualRef.current > 0 && feedbackStartRef.current > 0) {
+      const feedbackActual = (Date.now() - feedbackStartRef.current) / 1000
+      setCompletedSlots((prev) => [
+        ...prev,
+        { dance: danceActualRef.current, feedback: feedbackActual },
+      ])
+      danceActualRef.current = 0
+      feedbackStartRef.current = 0
+    }
     danceTimer.stop()
     feedbackTimer.stop()
     setPhase('idle')
@@ -240,6 +270,26 @@ export default function SessionPage() {
 
   const queueRemaining = sessionQueue.slice(queueIndex)
   const queueDone = sessionQueue.slice(0, queueIndex)
+
+  // ── Predicted start times ────────────────────────────────────────────────
+  const avgDance = completedSlots.length > 0
+    ? completedSlots.reduce((s, r) => s + r.dance, 0) / completedSlots.length
+    : danceDuration
+  const avgFeedback = completedSlots.length > 0
+    ? completedSlots.reduce((s, r) => s + r.feedback, 0) / completedSlots.length
+    : feedbackDuration
+  const avgSlotSec = avgDance + avgFeedback
+
+  const msUntilNextPair =
+    phase === 'dancing'
+      ? (danceTimer.timeLeft + avgFeedback) * 1000
+      : phase === 'feedback'
+      ? feedbackTimer.timeLeft * 1000
+      : 0
+
+  const predictedTimes = queueRemaining.map((_, i) =>
+    new Date(Date.now() + msUntilNextPair + i * avgSlotSec * 1000)
+  )
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -412,7 +462,14 @@ export default function SessionPage() {
               <span className="font-semibold">
                 Schedule ({queueRemaining.length} remaining of {sessionQueue.length})
               </span>
-              <span className="text-gray-400">{scheduleOpen ? '▲' : '▼'}</span>
+              <div className="flex items-center gap-3">
+                {completedSlots.length > 0 && (
+                  <span className="text-gray-500 text-xs">
+                    avg {fmtDuration(Math.round(avgSlotSec))}/round
+                  </span>
+                )}
+                <span className="text-gray-400">{scheduleOpen ? '▲' : '▼'}</span>
+              </div>
             </button>
 
             {scheduleOpen && (
@@ -421,7 +478,7 @@ export default function SessionPage() {
                 {queueDone.map((pair, i) => (
                   <div key={i} className="flex items-center gap-3 py-1.5 opacity-35">
                     <div className="text-gray-500 text-xs w-6">{i + 1}</div>
-                    <div className="text-sm line-through">
+                    <div className="text-sm line-through flex-1">
                       <span className="text-purple-300">{pair[0].name}</span>
                       <span className="text-gray-500 mx-2">×</span>
                       <span className="text-pink-300">{pair[1].name}</span>
@@ -432,7 +489,12 @@ export default function SessionPage() {
                 {/* Upcoming */}
                 {queueRemaining.map((pair, i) => {
                   const globalIdx = queueIndex + i
-                  const isCurrent = pair === currentPair || (queueIndex > 0 && i === 0 && phase !== 'idle')
+                  const isCurrent = queueIndex > 0 && i === 0 && phase !== 'idle'
+                  const predicted = predictedTimes[i]
+                  const timeStr = predicted.toLocaleTimeString([], {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })
                   return (
                     <div
                       key={globalIdx}
@@ -441,12 +503,15 @@ export default function SessionPage() {
                       }`}
                     >
                       <div className="text-gray-500 text-xs w-6">{globalIdx + 1}</div>
-                      <div className="text-sm">
+                      <div className="text-sm flex-1">
                         <span className="text-purple-300">{pair[0].name}</span>
                         <span className="text-gray-500 mx-2">×</span>
                         <span className="text-pink-300">{pair[1].name}</span>
                       </div>
-                      {i === 0 && <span className="text-xs text-emerald-400 ml-auto">next</span>}
+                      <div className="text-gray-400 text-xs tabular-nums">{timeStr}</div>
+                      {i === 0 && !isCurrent && (
+                        <span className="text-xs text-emerald-400">next</span>
+                      )}
                     </div>
                   )
                 })}
@@ -606,6 +671,7 @@ export default function SessionPage() {
                       usedPairsRef.current.clear()
                       setSessionQueue([])
                       setQueueIndex(0)
+                      setCompletedSlots([])
                     }
                   }}
                   className="mt-3 text-xs text-red-400 hover:text-red-300 transition-colors"
