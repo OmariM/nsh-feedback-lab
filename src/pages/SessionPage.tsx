@@ -299,12 +299,13 @@ export default function SessionPage() {
   )
 
   const generateSchedule = useCallback(() => {
-    const queue = buildSessionQueue(participants)
+    const played = new Set(rounds.map((r) => `${r.leadId}|${r.followId}`))
+    const queue = buildSessionQueue(participants, played)
     setSessionQueue(queue)
     setQueueIndex(0)
     usedPairsRef.current.clear()
     setScheduleOpen(true)
-  }, [participants])
+  }, [participants, rounds])
 
   const startRound = useCallback(() => {
     if (!currentPair) return

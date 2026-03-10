@@ -32,9 +32,11 @@ export function pickPair(
   return [lead, follow]
 }
 
-// Build a full session queue: every lead×follow combo in weighted-random order
+// Build a full session queue: every lead×follow combo in weighted-random order.
+// Pass `exclude` (a Set of "leadId|followId" strings) to skip already-played pairs.
 export function buildSessionQueue(
-  participants: Participant[]
+  participants: Participant[],
+  exclude: Set<string> = new Set()
 ): [Participant, Participant][] {
   const leads = participants.filter((p) => p.role === 'lead')
   const follows = participants.filter((p) => p.role === 'follow')
@@ -42,7 +44,7 @@ export function buildSessionQueue(
   const combos: [Participant, Participant][] = []
   for (const l of leads) {
     for (const f of follows) {
-      combos.push([l, f])
+      if (!exclude.has(`${l.id}|${f.id}`)) combos.push([l, f])
     }
   }
 
