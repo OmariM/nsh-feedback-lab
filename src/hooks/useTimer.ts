@@ -35,6 +35,11 @@ export function useTimer(onComplete?: () => void) {
     onCompleteRef.current?.()
   }, [clear])
 
+  // Adjust live countdown by delta seconds (clamped to >= 0)
+  const adjust = useCallback((delta: number) => {
+    setTimeLeft((prev) => Math.max(0, prev + delta))
+  }, [])
+
   useEffect(() => {
     if (!running) {
       clear()
@@ -60,5 +65,5 @@ export function useTimer(onComplete?: () => void) {
   const seconds = timeLeft % 60
   const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 
-  return { timeLeft, formatted, running, start, pause, stop, skip }
+  return { timeLeft, formatted, running, start, pause, stop, skip, adjust }
 }

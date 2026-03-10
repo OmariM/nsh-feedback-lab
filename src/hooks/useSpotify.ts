@@ -29,7 +29,10 @@ interface SpotifyPlayer {
   getCurrentState(): Promise<unknown>
   pause(): Promise<void>
   resume(): Promise<void>
+  setVolume(volume: number): Promise<void>
 }
+
+const BASE_VOLUME = 0.8
 
 export function useSpotify() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -44,6 +47,7 @@ export function useSpotify() {
   const [sdkReady, setSdkReady] = useState(false)
   const playerRef = useRef<SpotifyPlayer | null>(null)
   const playedUris = useRef<Set<string>>(new Set())
+  const fadingRef = useRef(false)
 
   // Check auth on mount
   useEffect(() => {
@@ -79,7 +83,7 @@ export function useSpotify() {
         const token = await getValidToken()
         if (token) cb(token)
       },
-      volume: 0.8,
+      volume: BASE_VOLUME,
     })
 
     player.addListener('ready', (data) => {
@@ -144,9 +148,13 @@ export function useSpotify() {
 
     const unplayed = tracks.filter((t) => !playedUris.current.has(t.uri))
     const pool = unplayed.length > 0 ? unplayed : tracks
-    const track = pool[Math.floor(Math.random() * pool.length)]
+    if (unplayed.length === 0) playedUris.current.clear()
 
+    const track = pool[Math.floor(Math.random() * pool.length)]
     playedUris.current.add(track.uri)
+
+    // Restore volume before playing in case a fade was in progress
+    try { await playerRef.current?.setVolume(BASE_VOLUME) } catch { /* ignore */ }
     await playTrack(token, track.uri, deviceId)
     setCurrentTrack(track)
     setIsPlaying(true)
@@ -158,6 +166,7 @@ export function useSpotify() {
       const token = await getValidToken()
       if (!token) return
       playedUris.current.add(track.uri)
+      try { await playerRef.current?.setVolume(BASE_VOLUME) } catch { /* ignore */ }
       await playTrack(token, track.uri, deviceId)
       setCurrentTrack(track)
       setIsPlaying(true)
@@ -175,6 +184,37 @@ export function useSpotify() {
     }
   }, [isPlaying])
 
+  const pause = useCallback(async () => {
+    const token = await getValidToken()
+    if (token) await pausePlayback(token)
+  }, [])
+
+  // Fade volume to 0 over durationMs, then pause and restore volume
+  const fadeOut = useCallback(async (durationMs = 3000) => {
+    if (!playerRef.current || fadingRef.current) return
+    fadingRef.current = true
+
+    const steps = 20
+    const intervalMs = durationMs / steps
+
+    for (let i = steps - 1; i >= 0; i--) {
+      await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
+      if (!fadingRef.current) break // cancelled
+      try {
+        await playerRef.current?.setVolume((i / steps) * BASE_VOLUME)
+      } catch { /* ignore */ }
+    }
+
+    const token = await getValidToken()
+    if (token) {
+      try { await pausePlayback(token) } catch { /* ignore */ }
+    }
+
+    // Restore volume for next song
+    try { await playerRef.current?.setVolume(BASE_VOLUME) } catch { /* ignore */ }
+    fadingRef.current = false
+  }, [])
+
   return {
     isAuthenticated,
     playlists,
@@ -187,5 +227,7 @@ export function useSpotify() {
     playRandom,
     playSpecific,
     togglePlay,
+    pause,
+    fadeOut,
   }
 }

@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { useTimer } from '../hooks/useTimer'
 import { useSpotify } from '../hooks/useSpotify'
-import { pickPair } from '../lib/pairing'
+import { buildSessionQueue } from '../lib/pairing'
 import { initiateSpotifyLogin } from '../lib/spotify'
 import type { Participant, Round, SessionPhase } from '../types'
 
-const DANCE_SECONDS = 120
-const FEEDBACK_SECONDS = 180
+const DEFAULT_DANCE_SECONDS = 120
+const DEFAULT_FEEDBACK_SECONDS = 180
 
 function beep(frequency = 880, duration = 0.2) {
   try {
@@ -28,6 +28,10 @@ function beep(frequency = 880, duration = 0.2) {
   }
 }
 
+function fmtDuration(s: number) {
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
 export default function SessionPage() {
   const navigate = useNavigate()
   const [participants, setParticipants] = useLocalStorage<Participant[]>('nsh-participants', [])
@@ -35,19 +39,36 @@ export default function SessionPage() {
   const [currentPair, setCurrentPair] = useState<[Participant, Participant] | null>(null)
   const [phase, setPhase] = useState<SessionPhase>('idle')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [trackSearch, setTrackSearch] = useState('')
   const [showTrackList, setShowTrackList] = useState(false)
 
+  // Timer durations (adjustable before round starts)
+  const [danceDuration, setDanceDuration] = useState(DEFAULT_DANCE_SECONDS)
+  const [feedbackDuration, setFeedbackDuration] = useState(DEFAULT_FEEDBACK_SECONDS)
+
+  // Use refs so callbacks always see latest values without re-creating timers
+  const feedbackDurationRef = useRef(feedbackDuration)
+  feedbackDurationRef.current = feedbackDuration
+
+  // Session schedule queue
+  const [sessionQueue, setSessionQueue] = useState<[Participant, Participant][]>([])
+  const [queueIndex, setQueueIndex] = useState(0)
+
+  // Track used lead×follow combos to enforce all-pairs-before-repeat
+  const usedPairsRef = useRef<Set<string>>(new Set())
+
   const spotify = useSpotify()
 
-  // ── Phase transitions ──────────────────────────────────────────────────────
+  // ── Phase transitions ───────────────────────────────────────────────────────
 
   const onDanceEnd = useCallback(() => {
     beep(660, 0.4)
+    spotify.fadeOut()
     setPhase('feedback')
-    feedbackTimer.start(FEEDBACK_SECONDS)
+    feedbackTimer.start(feedbackDurationRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [spotify])
 
   const onFeedbackEnd = useCallback(() => {
     beep(880, 0.2)
@@ -60,56 +81,124 @@ export default function SessionPage() {
 
   const activeTimer = phase === 'dancing' ? danceTimer : feedbackTimer
 
-  // ── Pair management ────────────────────────────────────────────────────────
+  // ── Pair management ─────────────────────────────────────────────────────────
 
-  const pickNext = useCallback(() => {
-    const pair = pickPair(participants, currentPair ?? [])
-    setCurrentPair(pair)
-    setPhase('idle')
-    danceTimer.stop()
-    feedbackTimer.stop()
-  }, [participants, currentPair, danceTimer, feedbackTimer])
+  const pickNextPair = useCallback(
+    (afterPair: [Participant, Participant] | null = currentPair) => {
+      let pair: [Participant, Participant] | null = null
+
+      // Use queue if available (constraint already enforced at generation time)
+      if (queueIndex < sessionQueue.length) {
+        pair = sessionQueue[queueIndex]
+        setQueueIndex((qi) => qi + 1)
+      } else {
+        // Random with no-repeat: build available combos, exclude current pair
+        const currentIds = new Set((afterPair ?? []).map((p) => p.id))
+        const leads = participants.filter((p) => p.role === 'lead' && !currentIds.has(p.id))
+        const follows = participants.filter((p) => p.role === 'follow' && !currentIds.has(p.id))
+
+        let available: [Participant, Participant][] = []
+        for (const l of leads) {
+          for (const f of follows) {
+            if (!usedPairsRef.current.has(`${l.id}|${f.id}`)) {
+              available.push([l, f])
+            }
+          }
+        }
+
+        // All combos exhausted — reset and start new cycle
+        if (available.length === 0) {
+          usedPairsRef.current.clear()
+          for (const l of leads) {
+            for (const f of follows) {
+              available.push([l, f])
+            }
+          }
+        }
+
+        if (available.length === 0) return
+
+        // Weighted pick by combined handicap
+        const weights = available.map(([l, f]) => l.handicap * f.handicap)
+        const total = weights.reduce((a, b) => a + b, 0)
+        let r = Math.random() * total
+        let idx = available.length - 1
+        for (let i = 0; i < available.length; i++) {
+          r -= weights[i]
+          if (r <= 0) { idx = i; break }
+        }
+        pair = available[idx]
+      }
+
+      if (!pair) return
+      usedPairsRef.current.add(`${pair[0].id}|${pair[1].id}`)
+      setCurrentPair(pair)
+      setPhase('idle')
+      danceTimer.stop()
+      feedbackTimer.stop()
+    },
+    [currentPair, participants, sessionQueue, queueIndex, danceTimer, feedbackTimer]
+  )
+
+  const generateSchedule = useCallback(() => {
+    const queue = buildSessionQueue(participants)
+    setSessionQueue(queue)
+    setQueueIndex(0)
+    usedPairsRef.current.clear()
+    setScheduleOpen(true)
+  }, [participants])
 
   const startRound = useCallback(() => {
     if (!currentPair) return
     setPhase('dancing')
-    danceTimer.start(DANCE_SECONDS)
+    danceTimer.start(danceDuration)
     spotify.playRandom()
-  }, [currentPair, danceTimer, spotify])
+  }, [currentPair, danceTimer, danceDuration, spotify])
 
-  const endRound = useCallback(() => {
-    if (!currentPair) return
-
-    // Record round
-    const [lead, follow] = currentPair
-    const round: Round = {
-      id: uuidv4(),
-      leadId: lead.id,
-      followId: follow.id,
-      leadName: lead.name,
-      followName: follow.name,
-      songUri: spotify.currentTrack?.uri ?? '',
-      songTitle: spotify.currentTrack?.name ?? '',
-      timestamp: new Date().toISOString(),
-    }
-    setRounds((prev) => [...prev, round])
-
-    // Update rounds played
-    setParticipants((prev) =>
-      prev.map((p) =>
-        p.id === lead.id || p.id === follow.id
-          ? { ...p, roundsPlayed: p.roundsPlayed + 1 }
-          : p
+  const saveRound = useCallback(
+    (pair: [Participant, Participant]) => {
+      const [lead, follow] = pair
+      const round: Round = {
+        id: uuidv4(),
+        leadId: lead.id,
+        followId: follow.id,
+        leadName: lead.name,
+        followName: follow.name,
+        songUri: spotify.currentTrack?.uri ?? '',
+        songTitle: spotify.currentTrack?.name ?? '',
+        timestamp: new Date().toISOString(),
+      }
+      setRounds((prev) => [...prev, round])
+      setParticipants((prev) =>
+        prev.map((p) =>
+          p.id === lead.id || p.id === follow.id
+            ? { ...p, roundsPlayed: p.roundsPlayed + 1 }
+            : p
+        )
       )
-    )
+    },
+    [spotify.currentTrack, setRounds, setParticipants]
+  )
 
+  // "Finish Dance Early" — same transition as timer expiring
+  const finishDanceEarly = useCallback(() => {
+    danceTimer.skip()
+  }, [danceTimer])
+
+  // "Save & Next Pair" — end feedback, save round, pick next
+  const saveAndNext = useCallback(() => {
+    if (!currentPair) return
+    const savedPair = currentPair
+    saveRound(currentPair)
     danceTimer.stop()
     feedbackTimer.stop()
     setPhase('idle')
     setCurrentPair(null)
-  }, [currentPair, spotify.currentTrack, setRounds, setParticipants, danceTimer, feedbackTimer])
+    // Pass the just-finished pair so neither dancer is picked again immediately
+    pickNextPair(savedPair)
+  }, [currentPair, saveRound, danceTimer, feedbackTimer, pickNextPair])
 
-  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -122,14 +211,14 @@ export default function SessionPage() {
       }
       if (e.code === 'KeyN') {
         e.preventDefault()
-        pickNext()
+        pickNextPair()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [phase, currentPair, startRound, activeTimer, pickNext])
+  }, [phase, currentPair, startRound, activeTimer, pickNextPair])
 
-  // ── Timer pulse on last 10s ────────────────────────────────────────────────
+  // ── Derived UI state ────────────────────────────────────────────────────────
 
   const isUrgent = activeTimer.timeLeft > 0 && activeTimer.timeLeft <= 10
 
@@ -149,6 +238,9 @@ export default function SessionPage() {
       t.artist.toLowerCase().includes(trackSearch.toLowerCase())
   )
 
+  const queueRemaining = sessionQueue.slice(queueIndex)
+  const queueDone = sessionQueue.slice(0, queueIndex)
+
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Top bar */}
@@ -167,19 +259,17 @@ export default function SessionPage() {
         {/* Current pair display */}
         <div className="bg-gray-900 rounded-2xl p-8 text-center">
           {currentPair ? (
-            <>
-              <div className="flex items-center justify-center gap-8 mb-4">
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-purple-400 mb-1">Lead</div>
-                  <div className="text-4xl font-bold">{currentPair[0].name}</div>
-                </div>
-                <div className="text-gray-600 text-3xl">×</div>
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-pink-400 mb-1">Follow</div>
-                  <div className="text-4xl font-bold">{currentPair[1].name}</div>
-                </div>
+            <div className="flex items-center justify-center gap-8">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-purple-400 mb-1">Lead</div>
+                <div className="text-4xl font-bold">{currentPair[0].name}</div>
               </div>
-            </>
+              <div className="text-gray-600 text-3xl">×</div>
+              <div>
+                <div className="text-xs uppercase tracking-widest text-pink-400 mb-1">Follow</div>
+                <div className="text-4xl font-bold">{currentPair[1].name}</div>
+              </div>
+            </div>
           ) : (
             <div className="text-gray-500 text-xl py-4">No pair selected</div>
           )}
@@ -197,15 +287,81 @@ export default function SessionPage() {
           >
             {phase !== 'idle' ? activeTimer.formatted : '--:--'}
           </div>
+
+          {/* Live timer adjustments (during a round) */}
+          {phase !== 'idle' && (
+            <div className="flex items-center justify-center gap-3 mt-5">
+              <button
+                onClick={() => activeTimer.adjust(-5)}
+                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+              >
+                −5s
+              </button>
+              <span className="text-gray-500 text-sm w-16">live adjust</span>
+              <button
+                onClick={() => activeTimer.adjust(5)}
+                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+              >
+                +5s
+              </button>
+            </div>
+          )}
+
+          {/* Starting duration adjustments (when idle) */}
+          {phase === 'idle' && (
+            <div className="flex flex-col items-center gap-3 mt-5">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setDanceDuration((d) => Math.max(15, d - 15))}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                >
+                  −15s
+                </button>
+                <span className="text-gray-400 text-sm w-28 text-center">
+                  Dance: {fmtDuration(danceDuration)}
+                </span>
+                <button
+                  onClick={() => setDanceDuration((d) => d + 15)}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                >
+                  +15s
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setFeedbackDuration((d) => Math.max(15, d - 15))}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                >
+                  −15s
+                </button>
+                <span className="text-gray-400 text-sm w-28 text-center">
+                  Feedback: {fmtDuration(feedbackDuration)}
+                </span>
+                <button
+                  onClick={() => setFeedbackDuration((d) => d + 15)}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                >
+                  +15s
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Controls */}
         <div className="flex flex-wrap gap-3 justify-center">
           <button
-            onClick={pickNext}
+            onClick={() => pickNextPair()}
             className="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition-colors"
           >
             Pick Pair (N)
+          </button>
+
+          <button
+            onClick={generateSchedule}
+            className="px-5 py-2.5 bg-indigo-700 hover:bg-indigo-600 rounded-lg font-semibold transition-colors"
+          >
+            Generate Schedule
           </button>
 
           {phase === 'idle' && (
@@ -219,31 +375,85 @@ export default function SessionPage() {
           )}
 
           {(phase === 'dancing' || phase === 'feedback') && (
-            <>
-              <button
-                onClick={activeTimer.pause}
-                className="px-5 py-2.5 bg-yellow-700 hover:bg-yellow-600 rounded-lg font-semibold transition-colors"
-              >
-                {activeTimer.running ? 'Pause (Space)' : 'Resume (Space)'}
-              </button>
-              <button
-                onClick={activeTimer.skip}
-                className="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition-colors"
-              >
-                Skip Timer
-              </button>
-            </>
+            <button
+              onClick={activeTimer.pause}
+              className="px-5 py-2.5 bg-yellow-700 hover:bg-yellow-600 rounded-lg font-semibold transition-colors"
+            >
+              {activeTimer.running ? 'Pause (Space)' : 'Resume (Space)'}
+            </button>
+          )}
+
+          {phase === 'dancing' && (
+            <button
+              onClick={finishDanceEarly}
+              className="px-5 py-2.5 bg-orange-700 hover:bg-orange-600 rounded-lg font-semibold transition-colors"
+            >
+              Finish Dance Early
+            </button>
           )}
 
           {phase === 'feedback' && (
             <button
-              onClick={endRound}
-              className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg font-semibold transition-colors"
+              onClick={saveAndNext}
+              className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg font-semibold transition-colors"
             >
-              End &amp; Save Round
+              Save &amp; Next Pair
             </button>
           )}
         </div>
+
+        {/* Session schedule */}
+        {sessionQueue.length > 0 && (
+          <div className="bg-gray-900 rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setScheduleOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-800 transition-colors"
+            >
+              <span className="font-semibold">
+                Schedule ({queueRemaining.length} remaining of {sessionQueue.length})
+              </span>
+              <span className="text-gray-400">{scheduleOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {scheduleOpen && (
+              <div className="px-5 pb-5 max-h-72 overflow-y-auto space-y-1">
+                {/* Completed */}
+                {queueDone.map((pair, i) => (
+                  <div key={i} className="flex items-center gap-3 py-1.5 opacity-35">
+                    <div className="text-gray-500 text-xs w-6">{i + 1}</div>
+                    <div className="text-sm line-through">
+                      <span className="text-purple-300">{pair[0].name}</span>
+                      <span className="text-gray-500 mx-2">×</span>
+                      <span className="text-pink-300">{pair[1].name}</span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Upcoming */}
+                {queueRemaining.map((pair, i) => {
+                  const globalIdx = queueIndex + i
+                  const isCurrent = pair === currentPair || (queueIndex > 0 && i === 0 && phase !== 'idle')
+                  return (
+                    <div
+                      key={globalIdx}
+                      className={`flex items-center gap-3 py-1.5 rounded-lg ${
+                        isCurrent ? 'bg-gray-800 px-2' : ''
+                      }`}
+                    >
+                      <div className="text-gray-500 text-xs w-6">{globalIdx + 1}</div>
+                      <div className="text-sm">
+                        <span className="text-purple-300">{pair[0].name}</span>
+                        <span className="text-gray-500 mx-2">×</span>
+                        <span className="text-pink-300">{pair[1].name}</span>
+                      </div>
+                      {i === 0 && <span className="text-xs text-emerald-400 ml-auto">next</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Spotify mini-player */}
         <div className="bg-gray-900 rounded-2xl p-5">
@@ -261,7 +471,6 @@ export default function SessionPage() {
 
           {spotify.isAuthenticated && (
             <>
-              {/* Playlist selector */}
               {spotify.playlists.length > 0 && (
                 <div className="mb-4">
                   <select
@@ -279,7 +488,6 @@ export default function SessionPage() {
                 </div>
               )}
 
-              {/* Current track */}
               <div className="flex items-center gap-4 mb-4">
                 {spotify.currentTrack ? (
                   <>
@@ -315,7 +523,6 @@ export default function SessionPage() {
                 )}
               </div>
 
-              {/* Track list toggle */}
               {spotify.tracks.length > 0 && (
                 <div>
                   <button
@@ -396,6 +603,9 @@ export default function SessionPage() {
                   onClick={() => {
                     if (confirm('Reset all rounds? Participant roster will be kept.')) {
                       setRounds([])
+                      usedPairsRef.current.clear()
+                      setSessionQueue([])
+                      setQueueIndex(0)
                     }
                   }}
                   className="mt-3 text-xs text-red-400 hover:text-red-300 transition-colors"
@@ -408,7 +618,6 @@ export default function SessionPage() {
         </div>
       </div>
 
-      {/* Keyboard hint */}
       <div className="text-center text-gray-700 text-xs pb-6">
         Space: start/pause · N: next pair
       </div>

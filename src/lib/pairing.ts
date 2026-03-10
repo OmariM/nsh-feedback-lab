@@ -11,7 +11,6 @@ export function weightedRandom(pool: Participant[]): Participant {
     if (r <= 0) return participant
   }
 
-  // Fallback (floating point edge case)
   return pool[pool.length - 1]
 }
 
@@ -31,4 +30,52 @@ export function pickPair(
   const follow = weightedRandom(follows)
 
   return [lead, follow]
+}
+
+// Build a full session queue: every lead×follow combo in weighted-random order
+export function buildSessionQueue(
+  participants: Participant[]
+): [Participant, Participant][] {
+  const leads = participants.filter((p) => p.role === 'lead')
+  const follows = participants.filter((p) => p.role === 'follow')
+
+  const combos: [Participant, Participant][] = []
+  for (const l of leads) {
+    for (const f of follows) {
+      combos.push([l, f])
+    }
+  }
+
+  // Weighted shuffle: at each step prefer pairs that don't repeat either
+  // dancer from the previous pair. Fall back to any remaining pair only if
+  // no non-overlapping option exists (e.g. very small roster).
+  const result: [Participant, Participant][] = []
+  const pool = [...combos]
+  let lastPair: [Participant, Participant] | null = null
+
+  while (pool.length > 0) {
+    const lastIds = new Set<string>(lastPair ? [lastPair[0].id, lastPair[1].id] : [])
+    const preferred = pool.filter(([l, f]: [Participant, Participant]) => !lastIds.has(l.id) && !lastIds.has(f.id))
+    const candidates: [Participant, Participant][] = preferred.length > 0 ? preferred : pool
+
+    const weights = candidates.map(([l, f]: [Participant, Participant]) => l.handicap * f.handicap)
+    const total = weights.reduce((a: number, b: number) => a + b, 0)
+    let r = Math.random() * total
+    let idx = candidates.length - 1
+
+    for (let i = 0; i < candidates.length; i++) {
+      r -= weights[i]
+      if (r <= 0) {
+        idx = i
+        break
+      }
+    }
+
+    const chosen = candidates[idx]
+    result.push(chosen)
+    lastPair = chosen
+    pool.splice(pool.indexOf(chosen), 1)
+  }
+
+  return result
 }
