@@ -294,44 +294,44 @@ export default function SessionPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-800">
         <button
           onClick={() => navigate('/')}
           className="text-gray-400 hover:text-white transition-colors text-sm"
         >
           ← Roster
         </button>
-        <h1 className="font-bold text-lg">NSH Feedback Lab</h1>
-        <div className="text-gray-400 text-sm">{rounds.length} rounds today</div>
+        <h1 className="font-bold text-base sm:text-lg">NSH Feedback Lab</h1>
+        <div className="text-gray-400 text-sm">{rounds.length} rounds</div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 sm:py-8 space-y-4 sm:space-y-6">
         {/* Current pair display */}
-        <div className="bg-gray-900 rounded-2xl p-8 text-center">
+        <div className="bg-gray-900 rounded-2xl p-5 sm:p-8 text-center">
           {currentPair ? (
-            <div className="flex items-center justify-center gap-8">
+            <div className="flex items-center justify-center gap-4 sm:gap-8">
               <div>
                 <div className="text-xs uppercase tracking-widest text-purple-400 mb-1">Lead</div>
-                <div className="text-4xl font-bold">{currentPair[0].name}</div>
+                <div className="text-2xl sm:text-4xl font-bold">{currentPair[0].name}</div>
               </div>
-              <div className="text-gray-600 text-3xl">×</div>
+              <div className="text-gray-600 text-xl sm:text-3xl">×</div>
               <div>
                 <div className="text-xs uppercase tracking-widest text-pink-400 mb-1">Follow</div>
-                <div className="text-4xl font-bold">{currentPair[1].name}</div>
+                <div className="text-2xl sm:text-4xl font-bold">{currentPair[1].name}</div>
               </div>
             </div>
           ) : (
-            <div className="text-gray-500 text-xl py-4">No pair selected</div>
+            <div className="text-gray-500 text-lg py-3">No pair selected</div>
           )}
         </div>
 
         {/* Timer + phase */}
-        <div className="bg-gray-900 rounded-2xl p-8 text-center">
-          <div className={`text-xs uppercase tracking-widest mb-3 ${phaseColor}`}>
+        <div className="bg-gray-900 rounded-2xl p-5 sm:p-8 text-center">
+          <div className={`text-xs uppercase tracking-widest mb-2 sm:mb-3 ${phaseColor}`}>
             {phaseLabel}
           </div>
           <div
-            className={`text-8xl font-mono font-bold tabular-nums transition-all ${phaseColor} ${
+            className={`text-6xl sm:text-8xl font-mono font-bold tabular-nums transition-all ${phaseColor} ${
               isUrgent ? 'animate-pulse' : ''
             }`}
           >
@@ -340,17 +340,17 @@ export default function SessionPage() {
 
           {/* Live timer adjustments (during a round) */}
           {phase !== 'idle' && (
-            <div className="flex items-center justify-center gap-3 mt-5">
+            <div className="flex items-center justify-center gap-3 mt-4 sm:mt-5">
               <button
                 onClick={() => activeTimer.adjust(-5)}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
               >
                 −5s
               </button>
-              <span className="text-gray-500 text-sm w-16">live adjust</span>
+              <span className="text-gray-500 text-xs sm:text-sm w-16">live adjust</span>
               <button
                 onClick={() => activeTimer.adjust(5)}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
               >
                 +5s
               </button>
@@ -359,37 +359,37 @@ export default function SessionPage() {
 
           {/* Starting duration adjustments (when idle) */}
           {phase === 'idle' && (
-            <div className="flex flex-col items-center gap-3 mt-5">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col items-center gap-2 sm:gap-3 mt-4 sm:mt-5">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setDanceDuration((d) => Math.max(15, d - 15))}
-                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
                 >
                   −15s
                 </button>
-                <span className="text-gray-400 text-sm w-28 text-center">
+                <span className="text-gray-400 text-sm w-32 text-center">
                   Dance: {fmtDuration(danceDuration)}
                 </span>
                 <button
                   onClick={() => setDanceDuration((d) => d + 15)}
-                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
                 >
                   +15s
                 </button>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setFeedbackDuration((d) => Math.max(15, d - 15))}
-                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
                 >
                   −15s
                 </button>
-                <span className="text-gray-400 text-sm w-28 text-center">
+                <span className="text-gray-400 text-sm w-32 text-center">
                   Feedback: {fmtDuration(feedbackDuration)}
                 </span>
                 <button
                   onClick={() => setFeedbackDuration((d) => d + 15)}
-                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-mono transition-colors"
                 >
                   +15s
                 </button>
@@ -399,17 +399,17 @@ export default function SessionPage() {
         </div>
 
         {/* Controls */}
-        <div className="flex flex-wrap gap-3 justify-center">
+        <div className="flex flex-wrap gap-2 sm:gap-3 justify-center">
           <button
             onClick={() => pickNextPair()}
-            className="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition-colors"
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition-colors text-sm sm:text-base"
           >
             Pick Pair (N)
           </button>
 
           <button
             onClick={generateSchedule}
-            className="px-5 py-2.5 bg-indigo-700 hover:bg-indigo-600 rounded-lg font-semibold transition-colors"
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-700 hover:bg-indigo-600 rounded-lg font-semibold transition-colors text-sm sm:text-base"
           >
             Generate Schedule
           </button>
@@ -418,7 +418,7 @@ export default function SessionPage() {
             <button
               onClick={startRound}
               disabled={!currentPair}
-              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
+              className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
             >
               Start Round (Space)
             </button>
@@ -427,25 +427,25 @@ export default function SessionPage() {
           {(phase === 'dancing' || phase === 'feedback') && (
             <button
               onClick={activeTimer.pause}
-              className="px-5 py-2.5 bg-yellow-700 hover:bg-yellow-600 rounded-lg font-semibold transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2.5 bg-yellow-700 hover:bg-yellow-600 rounded-lg font-semibold transition-colors text-sm sm:text-base"
             >
-              {activeTimer.running ? 'Pause (Space)' : 'Resume (Space)'}
+              {activeTimer.running ? 'Pause' : 'Resume'}
             </button>
           )}
 
           {phase === 'dancing' && (
             <button
               onClick={finishDanceEarly}
-              className="px-5 py-2.5 bg-orange-700 hover:bg-orange-600 rounded-lg font-semibold transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2.5 bg-orange-700 hover:bg-orange-600 rounded-lg font-semibold transition-colors text-sm sm:text-base"
             >
-              Finish Dance Early
+              Finish Early
             </button>
           )}
 
           {phase === 'feedback' && (
             <button
               onClick={saveAndNext}
-              className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg font-semibold transition-colors"
+              className="w-full sm:w-auto px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg font-semibold transition-colors"
             >
               Save &amp; Next Pair
             </button>
@@ -521,7 +521,7 @@ export default function SessionPage() {
         )}
 
         {/* Spotify mini-player */}
-        <div className="bg-gray-900 rounded-2xl p-5">
+        <div className="bg-gray-900 rounded-2xl p-4 sm:p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold">Music</h2>
             {!spotify.isAuthenticated && (
@@ -684,7 +684,7 @@ export default function SessionPage() {
         </div>
       </div>
 
-      <div className="text-center text-gray-700 text-xs pb-6">
+      <div className="text-center text-gray-700 text-xs pb-8 hidden sm:block">
         Space: start/pause · N: next pair
       </div>
     </div>
