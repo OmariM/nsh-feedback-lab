@@ -35,15 +35,26 @@ interface SpotifyPlayer {
 const BASE_VOLUME = 0.8
 
 export function useSpotify() {
+  const [authChecking, setAuthChecking] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+
   const [playlists, setPlaylists] = useState<SpotifyPlaylist[]>([])
+  const [playlistsLoading, setPlaylistsLoading] = useState(false)
+  const [playlistsError, setPlaylistsError] = useState<string | null>(null)
+
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(
     () => localStorage.getItem('nsh-spotify-playlist')
   )
   const [tracks, setTracks] = useState<SpotifyTrack[]>([])
+  const [tracksLoading, setTracksLoading] = useState(false)
+  const [tracksError, setTracksError] = useState<string | null>(null)
+
   const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [playerConnecting, setPlayerConnecting] = useState(false)
+  const [playerError, setPlayerError] = useState<string | null>(null)
+
   const [sdkReady, setSdkReady] = useState(false)
   const playerRef = useRef<SpotifyPlayer | null>(null)
   const playedUris = useRef<Set<string>>(new Set())
@@ -52,7 +63,8 @@ export function useSpotify() {
   // Check auth on mount
   useEffect(() => {
     getValidToken().then((t) => {
-      if (t) setIsAuthenticated(true)
+      setIsAuthenticated(!!t)
+      setAuthChecking(false)
     })
   }, [])
 
@@ -64,10 +76,15 @@ export function useSpotify() {
       return
     }
 
+    setPlayerConnecting(true)
     const script = document.createElement('script')
     script.id = 'spotify-sdk'
     script.src = 'https://sdk.scdn.co/spotify-player.js'
     script.async = true
+    script.onerror = () => {
+      setPlayerError('Failed to load Spotify player SDK.')
+      setPlayerConnecting(false)
+    }
     document.body.appendChild(script)
 
     window.onSpotifyWebPlaybackSDKReady = () => setSdkReady(true)
@@ -76,6 +93,9 @@ export function useSpotify() {
   // Initialize player
   useEffect(() => {
     if (!sdkReady || !isAuthenticated) return
+
+    setPlayerConnecting(true)
+    setPlayerError(null)
 
     const player = new window.Spotify.Player({
       name: 'NSH Feedback Lab',
@@ -89,13 +109,45 @@ export function useSpotify() {
     player.addListener('ready', (data) => {
       const { device_id } = data as { device_id: string }
       setDeviceId(device_id)
+      setPlayerConnecting(false)
+      setPlayerError(null)
+    })
+
+    player.addListener('not_ready', () => {
+      setDeviceId(null)
+      setPlayerConnecting(true)
+    })
+
+    player.addListener('initialization_error', (data: unknown) => {
+      const message = (data as { message: string }).message
+      setPlayerError(`Player init failed: ${message}`)
+      setPlayerConnecting(false)
+    })
+
+    player.addListener('authentication_error', (data: unknown) => {
+      const message = (data as { message: string }).message
+      setPlayerError(`Spotify auth error: ${message}. Try reconnecting.`)
+      setPlayerConnecting(false)
+      setIsAuthenticated(false)
+    })
+
+    player.addListener('account_error', () => {
+      setPlayerError('Spotify Premium is required for in-browser playback.')
+      setPlayerConnecting(false)
     })
 
     player.addListener('player_state_changed', (state) => {
       if (!state) return
       const s = state as {
         paused: boolean
-        track_window: { current_track: { uri: string; name: string; artists: { name: string }[]; album: { images: { url: string }[] } } }
+        track_window: {
+          current_track: {
+            uri: string
+            name: string
+            artists: { name: string }[]
+            album: { images: { url: string }[] }
+          }
+        }
       }
       setIsPlaying(!s.paused)
       const t = s.track_window?.current_track
@@ -116,24 +168,51 @@ export function useSpotify() {
     return () => player.disconnect()
   }, [sdkReady, isAuthenticated])
 
-  // Load playlists when authenticated
+  // Load playlists
+  const loadPlaylists = useCallback(async () => {
+    const token = await getValidToken()
+    if (!token) return
+    setPlaylistsLoading(true)
+    setPlaylistsError(null)
+    try {
+      const result = await fetchUserPlaylists(token)
+      setPlaylists(result)
+    } catch (err) {
+      setPlaylistsError(
+        err instanceof Error ? err.message : 'Failed to load playlists.'
+      )
+    } finally {
+      setPlaylistsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    if (!isAuthenticated) return
-    getValidToken().then((token) => {
-      if (token) fetchUserPlaylists(token).then(setPlaylists)
-    })
-  }, [isAuthenticated])
+    if (isAuthenticated) loadPlaylists()
+  }, [isAuthenticated, loadPlaylists])
 
   // Load tracks when playlist selected
   useEffect(() => {
     if (!selectedPlaylistId) return
-    getValidToken().then((token) => {
-      if (token)
-        fetchPlaylistTracks(token, selectedPlaylistId).then((t) => {
-          setTracks(t)
-          playedUris.current.clear()
-        })
-    })
+
+    const run = async () => {
+      const token = await getValidToken()
+      if (!token) return
+      setTracksLoading(true)
+      setTracksError(null)
+      try {
+        const result = await fetchPlaylistTracks(token, selectedPlaylistId)
+        setTracks(result)
+        playedUris.current.clear()
+      } catch (err) {
+        setTracksError(
+          err instanceof Error ? err.message : 'Failed to load tracks.'
+        )
+      } finally {
+        setTracksLoading(false)
+      }
+    }
+
+    run()
   }, [selectedPlaylistId])
 
   const selectPlaylist = useCallback((id: string) => {
@@ -153,7 +232,6 @@ export function useSpotify() {
     const track = pool[Math.floor(Math.random() * pool.length)]
     playedUris.current.add(track.uri)
 
-    // Restore volume before playing in case a fade was in progress
     try { await playerRef.current?.setVolume(BASE_VOLUME) } catch { /* ignore */ }
     await playTrack(token, track.uri, deviceId)
     setCurrentTrack(track)
@@ -189,7 +267,6 @@ export function useSpotify() {
     if (token) await pausePlayback(token)
   }, [])
 
-  // Fade volume to 0 over durationMs, then pause and restore volume
   const fadeOut = useCallback(async (durationMs = 3000) => {
     if (!playerRef.current || fadingRef.current) return
     fadingRef.current = true
@@ -199,7 +276,7 @@ export function useSpotify() {
 
     for (let i = steps - 1; i >= 0; i--) {
       await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
-      if (!fadingRef.current) break // cancelled
+      if (!fadingRef.current) break
       try {
         await playerRef.current?.setVolume((i / steps) * BASE_VOLUME)
       } catch { /* ignore */ }
@@ -210,20 +287,32 @@ export function useSpotify() {
       try { await pausePlayback(token) } catch { /* ignore */ }
     }
 
-    // Restore volume for next song
     try { await playerRef.current?.setVolume(BASE_VOLUME) } catch { /* ignore */ }
     fadingRef.current = false
   }, [])
 
   return {
+    // Auth
+    authChecking,
     isAuthenticated,
+    // Player
+    playerConnecting,
+    playerError,
+    deviceId,
+    // Playlists
     playlists,
+    playlistsLoading,
+    playlistsError,
+    retryPlaylists: loadPlaylists,
     selectedPlaylistId,
     selectPlaylist,
+    // Tracks
     tracks,
+    tracksLoading,
+    tracksError,
+    // Playback
     currentTrack,
     isPlaying,
-    deviceId,
     playRandom,
     playSpecific,
     togglePlay,

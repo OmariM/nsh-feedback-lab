@@ -524,7 +524,7 @@ export default function SessionPage() {
         <div className="bg-gray-900 rounded-2xl p-4 sm:p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold">Music</h2>
-            {!spotify.isAuthenticated && (
+            {!spotify.authChecking && !spotify.isAuthenticated && (
               <button
                 onClick={initiateSpotifyLogin}
                 className="text-sm px-4 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg transition-colors"
@@ -534,8 +534,50 @@ export default function SessionPage() {
             )}
           </div>
 
+          {/* Auth checking */}
+          {spotify.authChecking && (
+            <p className="text-gray-500 text-sm">Checking Spotify connection...</p>
+          )}
+
+          {/* Not authenticated */}
+          {!spotify.authChecking && !spotify.isAuthenticated && (
+            <p className="text-gray-500 text-sm">
+              Connect your Spotify account to enable music playback.
+            </p>
+          )}
+
           {spotify.isAuthenticated && (
             <>
+              {/* Player status */}
+              {spotify.playerError && (
+                <div className="mb-4 text-sm text-red-400 bg-red-950 rounded-lg px-3 py-2">
+                  {spotify.playerError}
+                </div>
+              )}
+              {!spotify.playerError && spotify.playerConnecting && (
+                <p className="text-gray-500 text-sm mb-4">Connecting player...</p>
+              )}
+
+              {/* Playlist section */}
+              {spotify.playlistsLoading && (
+                <p className="text-gray-500 text-sm mb-4">Loading playlists...</p>
+              )}
+              {spotify.playlistsError && (
+                <div className="mb-4 flex items-center gap-3">
+                  <p className="text-red-400 text-sm flex-1">{spotify.playlistsError}</p>
+                  <button
+                    onClick={spotify.retryPlaylists}
+                    className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              {!spotify.playlistsLoading && !spotify.playlistsError && spotify.playlists.length === 0 && (
+                <p className="text-gray-500 text-sm mb-4">
+                  No playlists found on your Spotify account.
+                </p>
+              )}
               {spotify.playlists.length > 0 && (
                 <div className="mb-4">
                   <select
@@ -550,6 +592,12 @@ export default function SessionPage() {
                       </option>
                     ))}
                   </select>
+                  {spotify.tracksLoading && (
+                    <p className="text-gray-500 text-xs mt-2">Loading tracks...</p>
+                  )}
+                  {spotify.tracksError && (
+                    <p className="text-red-400 text-xs mt-2">{spotify.tracksError}</p>
+                  )}
                 </div>
               )}
 
