@@ -5,8 +5,8 @@ import { useLocalStorage } from '../hooks/useLocalStorage'
 import { useTimer } from '../hooks/useTimer'
 import { useSpotify } from '../hooks/useSpotify'
 import { buildSessionQueue } from '../lib/pairing'
-import { initiateSpotifyLogin } from '../lib/spotify'
-import type { Participant, Round, SessionPhase } from '../types'
+import { initiateSpotifyLogin, fetchPlaylistTracks, getValidToken } from '../lib/spotify'
+import type { Participant, Round, SessionPhase, SpotifyTrack } from '../types'
 
 const DEFAULT_DANCE_SECONDS = 120
 const DEFAULT_FEEDBACK_SECONDS = 180
@@ -32,6 +32,18 @@ function fmtDuration(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+// Parse a playlist ID from a Spotify URL or URI
+// e.g. https://open.spotify.com/playlist/37i9dQZF1DX... or spotify:playlist:37i9dQZF1DX...
+function parsePlaylistId(input: string): string | null {
+  const urlMatch = input.match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]+)/)
+  if (urlMatch) return urlMatch[1]
+  const uriMatch = input.match(/spotify:playlist:([A-Za-z0-9]+)/)
+  if (uriMatch) return uriMatch[1]
+  // bare ID (22 alphanumeric chars)
+  if (/^[A-Za-z0-9]{22}$/.test(input.trim())) return input.trim()
+  return null
+}
+
 export default function SessionPage() {
   const navigate = useNavigate()
   const [participants, setParticipants] = useLocalStorage<Participant[]>('nsh-participants', [])
@@ -42,6 +54,13 @@ export default function SessionPage() {
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [trackSearch, setTrackSearch] = useState('')
   const [showTrackList, setShowTrackList] = useState(false)
+  const [embedInput, setEmbedInput] = useState('')
+  const [embedPlaylistId, setEmbedPlaylistId] = useLocalStorage<string>('nsh-embed-playlist', '')
+  const [embedTracks, setEmbedTracks] = useState<SpotifyTrack[]>([])
+  const [embedTracksLoading, setEmbedTracksLoading] = useState(false)
+  const [embedTracksError, setEmbedTracksError] = useState<string | null>(null)
+  const [embedCurrentTrack, setEmbedCurrentTrack] = useState<SpotifyTrack | null>(null)
+  const embedPlayedUrisRef = useRef<Set<string>>(new Set())
 
   // Timer durations (adjustable before round starts)
   const [danceDuration, setDanceDuration] = useState(DEFAULT_DANCE_SECONDS)
@@ -65,6 +84,44 @@ export default function SessionPage() {
   const danceActualRef = useRef(0) // actual dance seconds, set when dance ends
 
   const spotify = useSpotify()
+
+  // ── Embed track loading ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!embedPlaylistId || !spotify.isAuthenticated) return
+    const run = async () => {
+      const token = await getValidToken()
+      if (!token) return
+      setEmbedTracksLoading(true)
+      setEmbedTracksError(null)
+      try {
+        const result = await fetchPlaylistTracks(token, embedPlaylistId)
+        setEmbedTracks(result)
+        embedPlayedUrisRef.current.clear()
+        setEmbedCurrentTrack(null)
+      } catch (err) {
+        setEmbedTracksError(err instanceof Error ? err.message : 'Failed to load tracks.')
+      } finally {
+        setEmbedTracksLoading(false)
+      }
+    }
+    run()
+  }, [embedPlaylistId, spotify.isAuthenticated])
+
+  const pickEmbedTrack = useCallback(() => {
+    if (embedTracks.length === 0) return
+    const unplayed = embedTracks.filter((t) => !embedPlayedUrisRef.current.has(t.uri))
+    const pool = unplayed.length > 0 ? unplayed : embedTracks
+    if (unplayed.length === 0) embedPlayedUrisRef.current.clear()
+    const track = pool[Math.floor(Math.random() * pool.length)]
+    embedPlayedUrisRef.current.add(track.uri)
+    setEmbedCurrentTrack(track)
+  }, [embedTracks])
+
+  function trackIdFromUri(uri: string): string {
+    // spotify:track:TRACK_ID → TRACK_ID
+    return uri.split(':').pop() ?? uri
+  }
 
   // ── Phase transitions ───────────────────────────────────────────────────────
 
@@ -172,8 +229,12 @@ export default function SessionPage() {
     danceStartRef.current = Date.now()
     setPhase('dancing')
     danceTimer.start(danceDuration)
-    spotify.playRandom()
-  }, [currentPair, danceTimer, danceDuration, spotify])
+    if (embedTracks.length > 0) {
+      pickEmbedTrack()
+    } else {
+      spotify.playRandom()
+    }
+  }, [currentPair, danceTimer, danceDuration, embedTracks.length, pickEmbedTrack, spotify])
 
   const saveRound = useCallback(
     (pair: [Participant, Participant]) => {
@@ -670,6 +731,91 @@ export default function SessionPage() {
                   )}
                 </div>
               )}
+
+              {/* Embedded player fallback */}
+              <div className="border-t border-gray-800 pt-4 mt-2">
+                <label className="text-xs text-gray-500 uppercase tracking-wide mb-2 block">
+                  Embedded playlist (per-track)
+                </label>
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Paste Spotify playlist URL or URI..."
+                    value={embedInput}
+                    onChange={(e) => setEmbedInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const id = parsePlaylistId(embedInput)
+                        if (id) { setEmbedPlaylistId(id); setEmbedInput('') }
+                      }
+                    }}
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    onClick={() => {
+                      const id = parsePlaylistId(embedInput)
+                      if (id) { setEmbedPlaylistId(id); setEmbedInput('') }
+                    }}
+                    disabled={!parsePlaylistId(embedInput)}
+                    className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-colors shrink-0"
+                  >
+                    Load
+                  </button>
+                </div>
+                {embedInput && !parsePlaylistId(embedInput) && (
+                  <p className="text-red-400 text-xs mb-3">
+                    Couldn't recognise a playlist ID — paste the full Spotify URL or URI.
+                  </p>
+                )}
+                {embedPlaylistId && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-500">
+                        {embedTracksLoading
+                          ? 'Loading tracks...'
+                          : embedTracks.length > 0
+                          ? `${embedTracks.length} tracks loaded`
+                          : 'Manual playback'}
+                      </span>
+                      <div className="flex items-center gap-3">
+                        {embedTracks.length > 0 && (
+                          <button
+                            onClick={pickEmbedTrack}
+                            className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
+                          >
+                            🎲 Next song
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { setEmbedPlaylistId(''); setEmbedTracks([]); setEmbedCurrentTrack(null) }}
+                          className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                    {embedTracksError && (
+                      <p className="text-red-400 text-xs mb-2">{embedTracksError}</p>
+                    )}
+                    {embedCurrentTrack ? (
+                      <iframe
+                        key={embedCurrentTrack.uri}
+                        src={`https://open.spotify.com/embed/track/${trackIdFromUri(embedCurrentTrack.uri)}?utm_source=generator&theme=0`}
+                        width="100%"
+                        height="152"
+                        frameBorder="0"
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                        loading="lazy"
+                        className="rounded-xl"
+                      />
+                    ) : embedTracks.length > 0 ? (
+                      <p className="text-gray-500 text-xs text-center py-4">
+                        Start a round to auto-pick a song, or click "Next song" above.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
