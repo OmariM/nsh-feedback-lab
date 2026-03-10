@@ -100,6 +100,10 @@ export default function SessionPage() {
   // Track used lead×follow combos to enforce all-pairs-before-repeat
   const usedPairsRef = useRef<Set<string>>(new Set())
 
+  // Ref so generateSchedule always reads the latest rounds (avoids stale closure)
+  const roundsRef = useRef(rounds)
+  roundsRef.current = rounds
+
   // Actual round durations for predicting future start times
   const [completedSlots, setCompletedSlots] = useState<{ dance: number; feedback: number }[]>([])
   const danceStartRef = useRef(0)
@@ -299,13 +303,14 @@ export default function SessionPage() {
   )
 
   const generateSchedule = useCallback(() => {
-    const played = new Set(rounds.map((r) => `${r.leadId}|${r.followId}`))
+    const played = new Set(roundsRef.current.map((r) => `${r.leadId}|${r.followId}`))
     const queue = buildSessionQueue(participants, played)
     setSessionQueue(queue)
     setQueueIndex(0)
+    setCurrentPair(null)
     usedPairsRef.current.clear()
     setScheduleOpen(true)
-  }, [participants, rounds])
+  }, [participants])
 
   const startRound = useCallback(() => {
     if (!currentPair) return
@@ -413,8 +418,11 @@ export default function SessionPage() {
       t.artist.toLowerCase().includes(trackSearch.toLowerCase())
   )
 
-  const queueRemaining = sessionQueue.slice(queueIndex)
-  const queueDone = sessionQueue.slice(0, queueIndex)
+  // When a current pair is active, it lives at queueIndex-1 — keep it in
+  // queueRemaining so it shows as "current", not crossed-out as "done".
+  const splitIdx = currentPair ? Math.max(0, queueIndex - 1) : queueIndex
+  const queueRemaining = sessionQueue.slice(splitIdx)
+  const queueDone = sessionQueue.slice(0, splitIdx)
 
   // ── Predicted start times ────────────────────────────────────────────────
   const avgDance = completedSlots.length > 0
@@ -633,8 +641,8 @@ export default function SessionPage() {
 
                 {/* Upcoming */}
                 {queueRemaining.map((pair, i) => {
-                  const globalIdx = queueIndex + i
-                  const isCurrent = queueIndex > 0 && i === 0 && phase !== 'idle'
+                  const globalIdx = splitIdx + i
+                  const isCurrent = i === 0 && !!currentPair && phase !== 'idle'
                   const predicted = predictedTimes[i]
                   const timeStr = predicted.toLocaleTimeString([], {
                     hour: 'numeric',
